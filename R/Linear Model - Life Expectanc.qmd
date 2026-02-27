@@ -1,0 +1,563 @@
+---
+title: "Linear Model - Life Expectancy"
+format: html
+editor: visual
+---
+
+## =============================================================================
+
+## MHEDAS
+
+## Biomedical Statistics
+
+## Multiple linear regression
+
+## Data source: https://www.kaggle.com/datasets/kumarajarshi/life-expectancy-who
+
+## =============================================================================
+
+# Libraries
+
+## =============================================================================
+
+```{r}
+library(dplyr)     # Tidyverse --> Manage data
+library(readr)     # Tidyverse --> Read data
+library(ggplot2)   # Tidyverse --> Graphics
+library(car)       # Residual plots
+library(emmeans)   # Marginal effects
+library(effects)   # Plot effects
+```
+
+# Data
+
+## =============================================================================
+
+```{r}
+setwd('/Users/johannaalbers/Documents/Uni/URV/first_semester/BS')
+d0 <- as_tibble(read.table('Life Expectancy Data.csv',
+                           header=TRUE, sep=',', stringsAsFactors = TRUE))
+```
+
+```{r}
+head(d0)
+```
+
+```{r}
+View(d0)
+```
+
+```{r}
+summary(d0)
+```
+
+#BMI = 1 -\> mistake!
+
+# Are there missing values in the data?
+
+# yes, seen as N.A. in summary
+
+##-- Clean data
+
+```{r}
+d0 <- d0 %>%
+  # Change of units in population (lower values are better)
+  mutate(Population=Population/1000) %>% 
+  # Rename variables to avoid dots
+  rename(thinness_10_19years = thinness..1.19.years,
+         thinness_5_9years   = thinness.5.9.years,
+         LifeExp             = Life.expectancy,
+         Income              = Income.composition.of.resources) 
+  
+  # Only year 2015 (only one year to avoid dependency of observations)
+d <- d0 %>% filter(Year==2015) %>% 
+  # Remove variables with a lot of missing values
+  dplyr::select(-Total.expenditure,-Alcohol,-Population,-GDP)    
+dim(d)
+```
+
+```{r}
+summary(d)
+```
+
+# Model fit
+
+## =============================================================================
+
+```{r}
+mod0 <- lm(LifeExp ~ . - Year - Country, data = d)   # . = all variables (but year, country)
+summary(mod0)
+```
+
+#residual = dif of obserevd and predicted value #median close to 0 #min and max close to 8 #estimate of BMI = negative -\> life ex decreases by 0,006 units with each BMI unit (slope) #p-value = significanze #income = life exp increases by 3 with each unit of income (slope) #statusDeveloping = lower life exp than developed (reference) (intercept) #t value = ratio estimate/standard error(=noise) #residual standard error= error we do when we use model instead of observaions #degrees of freedom = observations - number of coefficents #MRS = % of variability explained by model (90% = high)
+
+# Marginal contribution of each variable
+
+## =============================================================================
+
+```{r}
+Anova(mod0) # Marginal contribution (Type II)
+```
+
+#comparison of full model and full model - one variables #low p value = variable is important in model! (significant difference between the models) #ex income = important!
+
+```{r}
+anova(mod0) # Sequential contribution (Type I) according the order in the model
+```
+
+#same order as in dataset #1. compare model with no coefficient and first coefficient #2. compare model with first coef and first + second coef
+
+# Automatic variable selection
+
+## =============================================================================
+
+```{r}
+mod1 <- step(mod0) # By default, AIC criterion and backward-forward selection 
+summary(mod1)
+```
+
+##-- Collinearity
+
+```{r}
+vif(mod1)
+```
+
+#high vif = high collinarity to ????outcome???? #vif \> 5 or 3 -\> remove correlated variables for a model with explanatory purpoes
+
+```{r}
+with(d,cor(infant.deaths,under.five.deaths))
+```
+
+#corralation close 1 #scatter plot
+
+```{r}
+ggplot(d,aes(x=under.five.deaths,y=infant.deaths)) + geom_point()
+```
+
+#just keep one varaible #compare the 2 moedls and choose the one with higher multiple R square
+
+```{r}
+mod2a <- update(mod1,.~.-infant.deaths)
+summary(mod2a)
+```
+
+```{r}
+mod2b <- update(mod1,.~.-under.five.deaths)
+summary(mod2b)
+```
+
+#a is better
+
+```{r}
+mod2 <- mod2a
+vif(mod2)
+```
+
+#now all vif \< 3
+
+# Validation 1
+
+## =============================================================================
+
+##-- First alternative
+
+```{r}
+par(mfrow=c(2,2))
+plot(mod2)
+```
+
+#4 plots #most important: residuals vs fitted values: #assumption of linearity (red line on 0) and #Homoscedasticity (same variance, no patternn, funnel shape) #homosc. also in scale location (no strong in/-decreasing trend) #QQ for normality (standardized vs theoretical quantiles): #points on the line = normality #residuals vs leverage = influential points #observation 73 is high but still in the range
+
+##-- Independence versus order? Does that make sense? #here no, cause no time order of collection
+
+```{r}
+res   <- residuals(mod2)
+d_ind <- tibble(id=1:length(res),res=res)
+ggplot(d_ind,aes(x=id,y=res)) + geom_line() + geom_hline(color="red",yintercept = 0)
+```
+
+##-- Second alternative (car package) #important (seen before first of 4)
+
+```{r}
+residualPlot(mod2)
+```
+
+#see relationship of residuals and each coef
+
+```{r}
+residualPlots(mod2)
+```
+
+#quadratic shape hints to transform, use quadratic term in model #also Pr significant -\> quadraic term necessary!
+
+# Transformations?
+
+## =============================================================================
+
+##-- Polynomial transformations on the predictors \# Option 1: only works w/o missing values \# mod3 \<- lm(LifeExp\~ poly(thinness_5_9years,2) + Adult.Mortality + HIV.AIDS + \# Hepatitis.B + under.five.deaths + Income, d) \# Oops!! \# Option 2: with missing values
+
+```{r}
+mod3 <- lm(LifeExp~ thinness_5_9years         + I(thinness_5_9years^2) + 
+                    Adult.Mortality           + HIV.AIDS +
+                    Hepatitis.B               + under.five.deaths + Income, d)
+summary(mod3)
+```
+
+##-- Box-Cox transformation on the outcome (or log)
+
+```{r}
+par(mfrow=c(1,1))
+```
+
+#estimation of lambda #CI inlcudes 1 (power of 1 is not changing anything)
+
+```{r}
+boxCox(mod3)
+```
+
+##-- Do we have to transform the outcome? #no becasue power of 1
+
+# Validation 2
+
+## =============================================================================
+
+```{r}
+par(mfrow=c(2,2))
+plot(mod3)
+```
+
+```{r}
+residualPlot (mod3)
+```
+
+```{r}
+residualPlots(mod3)
+```
+
+-   some curves remain -\> check significance for necessarity of using quadratic terms (\*): rate of adult mortality (not done in class, cause no time)
+
+##-- Influential data and outliers
+
+```{r}
+influenceIndexPlot(mod3)
+```
+
+-   cook's distance = real life exp - predicted life exp.
+-   studentized residuals: 51 and 180 vers high
+-   p value to say that the residual is sig. (180!)
+-   hat-value: how far away is one observation from the other (73)
+
+# Influential observation
+
+-   high h-value = high priori infuence
+-   and high cook = high posteriori infuence
+
+```{r}
+d[73,]                   
+```
+
+-   high mortality
+
+```{r}
+View(d[73,],'India')
+```
+
+see relation values: red point = india (tanzt aus der Reihe)
+
+```{r}
+pairs(d[,attributes(mod3$terms)$term.labels[-2]],
+      col=ifelse(d$Country=='India',2 ,1),
+      pch=ifelse(d$Country=='India',19,1))
+```
+
+posteriori influence = when remove observation from model -\> sign. change of coefficience
+
+#cooks distance: \# observation 73 high influence #residuals explained by model, some (ex 180) far away (from real)real - predicted) #p value: significance to be an outlier #hat value: how far is one observation from the others? (leverage)
+
+# Outlier
+
+```{r}
+d[180,] 
+```
+
+```{r}
+View(d[180,],'Zimbabwe')
+```
+
+```{r}
+infIndexPlot(mod3,vars=c("Studentized"))
+```
+
+```{r}
+outlierTest(mod3)
+```
+
+-   significant outlier, not well explained by our model
+-   no need to be removed cause these observations are no mistakes
+
+# 2\*(1-pt(3.694281,mod3\$df.residual)) --\> First p-value
+
+# 0.00030644 \* sum(complete.cases(d)) --\> Second p-value
+
+# Interpretation
+
+## =============================================================================
+
+##-- Graphical "Effects"
+
+-   all effects related with all variables
+-   all: linear relationship of explanatory variable and outcome
+-   only thinness: quadratic relation
+
+USEFULL FUNCTION
+
+```{r}
+plot(allEffects(mod3))
+```
+
+##-- Association confidence interval
+
+USEFULL FUNCTION
+
+```{r}
+round(confint(mod3),3)
+```
+
+CI of coefficients (slopes) including 0 = no realtionship of variable and outcome
+
+##-- Marginal response
+
+emmeans() checks (adult mortality) independent of remaining variables
+
+mod3 = fitted modele
+
+range 0-400 with intervalls of 200 (3 parts)
+
+```{r}
+emmeans3 <- emmeans(mod3,~ Adult.Mortality,
+                           at=(list('Adult.Mortality'=seq(0,400,200))))
+emmeans3
+```
+
+emmean = life exp SE = standard error
+
+```{r}
+plot(emmeans3)
+```
+
+compare signif dif between groups of rates of mortailty (influencing outcome, life exp)
+
+```{r}
+pairs(emmeans3)
+```
+
+# Apparent Predictive performance
+
+calculated with training data! (overfitted)
+
+predict(mod3) = predicted values obs = observed values of life exp
+
+## =============================================================================
+
+```{r}
+d_pred_2015 <- tibble(pr  = predict(mod3), 
+                      obs = d %>% na.omit %>% pull(LifeExp))
+```
+
+##-- Predictive performance
+
+```{r}
+ggplot(d_pred_2015,aes(x=pr,y=obs)) + 
+  geom_point() +
+  geom_abline(intercept=0,slope=1,linetype=2,color="red") +
+  xlab('Prediction') + ylab('Observed')
+```
+
+all points are wanted to be closed to dashed line = good model
+
+##-- MSE and RMSE
+
+root mean squared error = expected error to have in future predictions (lower better, in comparison with sd standard deviation of data (life exp))
+
+```{r}
+mean(mod3$residuals^2)  # MSE
+sqrt(mean(mod3$residuals^2)) # RMSE
+  sd(d$LifeExp)              # Standard deviation of life expectancy
+```
+
+##-- What do you think about the predictive performance?
+
+# New Prediction
+
+## =============================================================================
+
+2014, not 2015
+
+```{r}
+set.seed(12345)
+obs_to_predict <- d0 %>%  filter(Year==2014) %>% sample_n(1)
+
+##-- Confidence interval for the expected value
+#mean of life exp for group with same characteristics as Serbia
+
+predict(mod3, obs_to_predict, interval = "confidence")
+```
+
+point estimate, CI
+
+##-- Prediction interval for the point value
+
+```{r}
+# prediction for individual value
+# prediction for Serbia in 2014
+predict(mod3, obs_to_predict, interval = "prediction")
+```
+
+same point estimate, larger CI
+
+##-- Real value
+
+```{r}
+# real values (observed), included in predicted CI
+obs_to_predict$LifeExp
+```
+
+##-- What is the difference between these two intervals?
+
+# Real Predictive performance
+
+## =============================================================================
+
+```{r}
+d_2014 <- d0 %>%  filter(Year==2014) %>% na.omit #remove missing
+d_pred_2014 <- tibble(pr  = predict(mod3,d_2014),   #predicted values
+                      obs = d_2014 %>% pull(LifeExp))  #observed values
+```
+
+##-- Predictive performance
+
+```{r}
+ggplot(d_pred_2014,aes(x=pr,y=obs)) + 
+  geom_point() +
+  geom_abline(intercept=0,slope=1,linetype=2,color="red")
+```
+
+##-- MSE and RMSE
+
+```{r}
+(MSE <- with(d_pred_2014, mean((pr-obs)^2)))# MSE
+(RMSE <- sqrt(MSE))                          # RMSE
+sd(d_2014$LifeExp)                           # SD of life expectancy
+```
+
+##-- What do you think about the predictive performance? RMSE of prediction on testing set (2014) is higher than in model tested on 2025 (training set)
+
+\< SD = good model
+
+# Life expectancy according to Status (categorical variable)
+
+## =============================================================================
+
+```{r}
+#use only categorical variable (status)
+mod4 <- lm(LifeExp~Status,d)
+summary(mod4)
+```
+
+intercept changes about -10. 10 years lower life exp in developing countries compared to reference (developed countries)
+
+# How do you interpret the coefficient related with the Status?
+
+the status is included in the other variables ex income,...
+
+################################################################################ 
+
+# Activity: Try to find another useful model using manual selection of variables
+
+ex bootstrap, use criteria of peaks, anova,lasso regression,...
+
+# from mod0
+
+################################################################################ 
+
+```{r}
+mod0
+```
+
+# LASSO regression
+
+```{r}
+library(glmnet)
+```
+
+# 1) Define outcome and excluded columns
+
+```{r}
+outcome <- "LifeExp"
+exclude <- c("Year", "Country")   # add IDs/leakage cols here if needed
+
+# 2) Build a clean modeling frame (same rows for X and y)
+form <- as.formula(
+  paste(outcome, "~ . -", paste(exclude, collapse = " - "))
+)
+
+mf <- model.frame(form, data = d, na.action = na.omit)
+```
+
+```{r}
+# 3) Create design matrix X (one-hot encodes factors); drop intercept column
+X <- model.matrix(form, data = mf)[, -1, drop = FALSE]
+
+# 4) Ensure y is a numeric VECTOR (prevents the multi-output issue)
+y <- mf[[outcome]]
+if (!is.numeric(y)) y <- as.numeric(y)
+
+# 5) Fit cross-validated LASSO
+set.seed(1)
+cv_fit <- cv.glmnet(
+  x = X,
+  y = y,
+  alpha = 1,           # 1 = LASSO
+  nfolds = 10,
+  standardize = TRUE
+)
+
+# 6) Inspect lambda 
+cat("lambda.min:", cv_fit$lambda.min, "\n")
+
+```
+
+```{r}
+# Plot CV curve (optional)
+plot(cv_fit)
+```
+
+```{r}
+# 7) Extract selected variables (non-zero coefficients)
+get_selected <- function(cv_obj, s = c("lambda.min", "lambda.1se")) {
+  s <- match.arg(s)
+  b <- coef(cv_obj, s = s)
+  vars <- rownames(b)[as.numeric(b) != 0]
+  setdiff(vars, "(Intercept)")
+}
+
+selected_min <- get_selected(cv_fit, "lambda.min")
+
+cat("\n--- Selected predictors ---\n")
+cat("At lambda.min:\n")
+print(selected_min)
+```
+
+```{r}
+# 8)Refit an interpretable linear model using selected predictors
+
+if (length(selected_min) == 0) {
+  cat("\nNo predictors selected. (Only intercept model)\n")
+} else {
+  final_form <- as.formula(paste(outcome, "~", paste(selected_min, collapse = " + ")))
+  final_lm <- lm(final_form, data = mf)
+
+  cat("\n--- Refit OLS on selected predictors ---\n")
+  print(summary(final_lm))
+}
+```
